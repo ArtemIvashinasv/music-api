@@ -58,7 +58,7 @@ API сгенерировано и документировано с исполь
 ### 1. Клонирование репозитория:
 
 ```sh
-git clone https://github.com/ArtemIvashinasv/GoTunesAPI.git
+git clone https://github.com/ArtemIvashinasv/music-api.git
 cd GoTunesAPI
 ```
 
