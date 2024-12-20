@@ -11,5 +11,3 @@ func LoadEnv() {
         log.Fatal("Ошибка при загрузке .env файла")
     }
 }
-
-

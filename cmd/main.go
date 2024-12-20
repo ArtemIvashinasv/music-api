@@ -1,69 +1,86 @@
 package main
 
 import (
-	"log"
-	"os"
-
-	"github.com/artemivashinasv/music-api/pkg/handler"
-	"github.com/artemivashinasv/music-api/pkg/repository"
-	"github.com/artemivashinasv/music-api/pkg/service"
-	"github.com/artemivashinasv/music-api/server"
-	"github.com/joho/godotenv"
+    "log"
+    "github.com/gin-gonic/gin"
+    "go-tunes/config"
+    "go-tunes/controllers"
+    "go-tunes/database"
+    _ "go-tunes/docs"
+    "github.com/swaggo/gin-swagger"
+    "github.com/swaggo/files"
+    "net/http"
 )
 
-// @title Music API
+// @title Music Library API
 // @version 1.0
-// @description API для управления музыкой (песни, группы, даты релизов и тексты).
-// @termsOfService http://example.com/terms/
-// @contact.name API Support
-// @contact.url http://www.example.com/support
-// @contact.email support@example.com
-// @license.name MIT
-// @license.url https://opensource.org/licenses/MIT
+// @description API для управления библиотекой песен.
 // @host localhost:8080
 // @BasePath /
 
 func main() {
-	// Загрузка переменных окружения
-	if err := godotenv.Load(); err != nil {
-		log.Fatal("ERROR: .env файл не найден")
-	}
-	log.Println("INFO: Переменные окружения загружены")
+    // Загрузка переменных окружения
+    config.LoadEnv()
+    log.Println("INFO: Environment variables loaded.")
 
-	// Подключение к базе данных
-	db, err := repository.NewPostgresDB(repository.DBConfig{
-		Host:     os.Getenv("DB_HOST"),
-		Port:     os.Getenv("DB_PORT"),
-		User:     os.Getenv("DB_USER"),
-		Password: os.Getenv("DB_PASSWORD"),
-		DBName:   os.Getenv("DB_NAME"),
-		SSLMode:  os.Getenv("SSLMODE"),
-	})
-	if err != nil {
-		log.Fatalf("ERROR: Ошибка подключения к базе данных: %s", err.Error())
-	}
-	log.Println("INFO: Успешное подключение к базе данных")
+    // Подключение к базе данных и выполнение миграций
+    db := database.Connect()
+    log.Println("INFO: Database connection established.")
+    database.Migrate(db)
+    log.Println("INFO: Database migrations completed.")
 
-	// Выполнение миграций
-	if err := repository.Migrate(db); err != nil {
-		log.Fatalf("ERROR: Ошибка миграции: %s", err.Error())
-	}
-	log.Println("INFO: Миграции успешно выполнены")
+    // Основной сервер на порту 8080
+    router := gin.Default()
 
-	// Инициализация зависимостей
-	repos := repository.NewRepository(db)
-	services := service.NewService(repos)
-	handlers := handler.NewHandler(services)
+    // Определение маршрутов для основного API
+    router.GET("/info", controllers.GetSongInfo)       // Информация о песне
+    router.GET("/songs", controllers.GetSongs)         // Список песен
+    router.GET("/songs/:id/verses", controllers.GetSongTextWithPagination)  // Текст песни по ID
+    router.PUT("/songs/:id", controllers.UpdateSong)   // Обновление песни по ID
+    router.DELETE("/songs/:id", controllers.DeleteSong) // Удаление песни по ID
 
-	port := os.Getenv("PORT")
-	if port == "" {
-		port = "8080"
-	}
+    // Swagger для документации
+    router.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
+    log.Println("INFO: Swagger documentation is available at http://localhost:8080/swagger/index.html")
 
-	// Запуск сервера
-	srv := new(server.Server)
-	log.Printf("INFO: Сервер запущен на порту %s", port)
-	if err := srv.Run(port, handlers.InitRoutes()); err != nil {
-		log.Fatalf("ERROR: Ошибка запуска сервера: %s", err.Error())
-	}
+    // Второй сервер на порту 8081 - Эмуляция внешнего API
+    go startMockServer()
+
+    // Запускаем основной сервер на порту 8080
+    log.Println("INFO: Starting the main server on port 8080...")
+    log.Fatal(router.Run(":8080"))
+}
+
+// startMockServer запускает тестовый сервер на порту 8081 для эмуляции внешнего API
+func startMockServer() {
+    testRouter := gin.Default()
+
+    // Определяем маршрут для эмуляции внешнего API
+    testRouter.GET("/info", func(c *gin.Context) {
+        group := c.Query("group")
+        song := c.Query("song")
+
+        // Проверка параметров запроса
+        if group == "" || song == "" {
+            log.Println("DEBUG: Missing request parameters: group or song.")
+            c.JSON(http.StatusBadRequest, gin.H{"error": "missing parameters"})
+            return
+        }
+
+        // Используем отдельную функцию для получения данных из JSON без необходимости использования *gin.Context
+        songDetail, err := controllers.GetSongDetailFromJSON(group, song)
+        if err != nil {
+            log.Printf("DEBUG: Error fetching song details: %v\n", err)
+            c.JSON(http.StatusNotFound, gin.H{"error": "song not found"})
+            return
+        }
+
+        log.Printf("INFO: Request to /info succeeded for group: %s, song: %s\n", group, song)
+        c.JSON(http.StatusOK, songDetail)
+    })
+
+    // Запускаем сервер на порту 8081
+    if err := testRouter.Run(":8081"); err != nil {
+        log.Fatalf("ERROR: Failed to start the test server: %v", err)
+    }
 }
